@@ -1,4 +1,4 @@
-<img width="1090" height="521" alt="image" src="https://github.com/user-attachments/assets/d94efb1c-be23-4ad7-a1d9-faff677a212e" /># Real-Time Audio Spectrum Analyzer
+/># Real-Time Audio Spectrum Analyzer
 
 Educational DSP project: capture live microphone audio, compute a one-sided FFT spectrum, and display it as a **real-time bar chart** or **scrolling waterfall spectrogram**.
 
