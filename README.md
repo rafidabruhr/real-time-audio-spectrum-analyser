@@ -3,7 +3,7 @@ $$
 $$
 
 <p align="center">
-<em>Live microphone capture → FFT → real-time bar chart or scrolling waterfall spectrogram, in pure Python.</em>
+<em>Live microphone or system-audio capture → FFT → real-time bar chart or scrolling waterfall spectrogram, with optional pitch detection.</em>
 </p>
 
 <p align="center">
@@ -18,9 +18,9 @@ $$
 \LARGE \textit{Overview}
 $$
 
-This tool captures live audio from your microphone, computes a one-sided FFT spectrum in real time, and renders it as either a **bar chart** or a **scrolling waterfall spectrogram**. It also includes a calibration workflow using a 1 kHz test tone, so you can verify frequency accuracy before trusting the display.
+This tool captures live audio — from a microphone or, on supported platforms, system-audio **loopback** — computes a one-sided FFT spectrum in real time, and renders it as a **bar chart** or a **scrolling waterfall spectrogram**. An optional autocorrelation-based **pitch tracker** overlays the detected note name, frequency, and cents deviation on either view. A calibration workflow using a 1 kHz test tone lets you verify frequency accuracy before trusting the display.
 
-**Stack:** Python 3.9+, `sounddevice` (PyAudio fallback), `numpy`, `matplotlib`.
+**Stack:** Python 3.9+, `sounddevice` (PyAudio fallback for mic-only capture), `numpy`, `matplotlib`.
 
 ---
 
@@ -29,7 +29,7 @@ $$
 $$
 
 - Python **3.9+**
-- A working microphone (built-in, headset, or USB)
+- A working microphone (built-in, headset, or USB), and/or a loopback-capable output device for system-audio capture
 - **macOS / Windows:** allow microphone access when prompted
 - **Linux:** PulseAudio or PipeWire (default on Fedora/Ubuntu)
 
@@ -53,13 +53,11 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-If `sounddevice` is unavailable on your system, install PyAudio manually:
+`sounddevice` is the primary backend. If it's unavailable on your system, install PyAudio manually — note that **loopback capture requires `sounddevice`** and has no PyAudio equivalent:
 
 ```bash
 pip install PyAudio
 ```
-
-The app auto-detects the available backend.
 
 ---
 
@@ -94,7 +92,27 @@ python main.py --window rectangular
 | `hamming` | Similar to Hann; slightly different sidelobe floor |
 | `rectangular` | Strongest sidelobes — smeared skirts on waterfall; useful for comparing leakage in lab settings |
 
-Close the plot window or press **Ctrl+C** in the terminal to exit. The mic stream is always closed cleanly on exit.
+**Pitch overlay** — adds detected note name, frequency, and cents offset to either view:
+
+```bash
+python main.py --pitch
+python main.py --mode waterfall --pitch
+```
+
+**Capture source** — microphone (default) or system-audio loopback:
+
+```bash
+python main.py --source mic
+python main.py --source loopback --device 4
+```
+
+```bash
+python main.py --list-devices     # list input devices and loopback candidates
+```
+
+> On Windows, loopback works automatically off the default output device. On Linux/macOS you must pass an explicit `--device` — use `--list-devices` to find a PulseAudio/PipeWire `Monitor of ...` input (Linux) or a virtual device such as BlackHole (macOS).
+
+Close the plot window or press **Ctrl+C** in the terminal to exit. The mic/loopback stream is always closed cleanly on exit.
 
 ---
 
@@ -104,11 +122,11 @@ $$
 
 Verify frequency accuracy with a 1 kHz test tone.
 
-**Terminal 1** — play a sine tone (default 1000 Hz):
+**Terminal 1** — play a sine tone (default 1000 Hz, 30 s):
 
 ```bash
 python test_tone.py
-python test_tone.py --freq 1000 --duration 60 --amplitude 0.3
+python test_tone.py --freq 1000 --duration 30 --amplitude 0.4
 ```
 
 **Terminal 2** — capture a single-frame bar chart:
@@ -117,10 +135,45 @@ python test_tone.py --freq 1000 --duration 60 --amplitude 0.3
 python main.py --static-bars
 ```
 
-The tallest bar should land on the bin nearest **1000 Hz**, i.e. within one bin width, where the frequency resolution is:
-```math
-\Delta f = \frac{\text{SAMPLE\_RATE}}{\text{CHUNK\_SIZE}}
-```
+The tallest bar should land on the bin nearest **1000 Hz**, i.e. within one bin width. The DFT's frequency resolution is:
+
+$$
+\Delta f = \frac{f_s}{N}
+$$
+
+where $f_s$ is `SAMPLE_RATE` and $N$ is `CHUNK_SIZE` — at the defaults, $\Delta f = 44100 / 1024 \approx 43.07\ \text{Hz}$.
+
+---
+
+$$
+\Large \textit{How It Works}
+$$
+
+Each captured frame of $N$ samples is windowed, transformed, and converted to decibels:
+
+$$
+X[k] = \sum_{n=0}^{N-1} w[n]\, x[n]\, e^{-i 2\pi kn/N}, \qquad k = 0, 1, \dots, \left\lfloor \frac{N}{2} \right\rfloor
+$$
+
+$$
+\text{dB}[k] = 20 \log_{10}\!\big(|X[k]| + \varepsilon\big)
+$$
+
+where $w[n]$ is the selected window function (Hann, Hamming, or rectangular) and $\varepsilon = 10^{-6}$ avoids $\log(0)$. Only the one-sided (non-negative frequency) half of the spectrum is kept, via `numpy.fft.rfft`.
+
+**Pitch detection** estimates the fundamental frequency from the frame's autocorrelation, computed efficiently in the frequency domain (Wiener–Khinchin theorem):
+
+$$
+r[\tau] = \mathcal{F}^{-1}\big\{\,\mathcal{F}\{x\}\cdot \overline{\mathcal{F}\{x\}}\,\big\}, \qquad r[\tau] \leftarrow \frac{r[\tau]}{r[0]}
+$$
+
+The tracker searches for the highest peak of $r[\tau]$ within the lag range corresponding to `PITCH_FMIN`–`PITCH_FMAX`, refines it with parabolic interpolation for sub-bin accuracy, and accepts it only if the peak confidence exceeds `PITCH_CONFIDENCE_MIN` and the frame's RMS exceeds `PITCH_RMS_MIN`. The frequency is converted to a MIDI note number and cents offset via:
+
+$$
+m = 69 + 12 \log_2\!\left(\frac{f}{440}\right)
+$$
+
+A median filter over the last `PITCH_SMOOTHING_FRAMES` estimates smooths the displayed pitch.
 
 ---
 
@@ -130,9 +183,10 @@ $$
 
 | Command | Purpose |
 |---|---|
-| `python main.py --capture-test` | Phase 1: print min/max/mean amplitude per chunk for 5 s |
+| `python main.py --capture-test` | Print min/max/mean amplitude per chunk for 5 s |
 | `python main.py --static-bars` | One-shot dB bar spectrum |
 | `python main.py --live-bars` | Same as `--mode bars` |
+| `python main.py --list-devices` | List audio devices and loopback candidates |
 
 ---
 
@@ -146,10 +200,17 @@ Edit `config.py`:
 |---|---|---|
 | `SAMPLE_RATE` | `44100` | Sample rate (Hz) |
 | `CHUNK_SIZE` | `1024` | Samples per FFT frame |
+| `CHANNELS` | `1` | Capture channel count |
+| `WINDOW_TYPE` | `"hann"` | Default FFT window |
 | `DB_MIN` / `DB_MAX` | `-60` / `0` | Display range (dB) |
 | `WATERFALL_HISTORY` | `200` | Scrolling time depth (frames) |
-| `COLORMAP` | `inferno` | Waterfall colormap |
+| `COLORMAP` | `"inferno"` | Waterfall colormap |
 | `TARGET_FPS` | `30` | Animation target |
+| `PITCH_FMIN` / `PITCH_FMAX` | `60` / `1200` Hz | Search range for pitch detection |
+| `PITCH_CONFIDENCE_MIN` | `0.45` | Min. normalized autocorrelation peak to report a pitch |
+| `PITCH_RMS_MIN` | `0.01` | Frames quieter than this are treated as silence |
+| `PITCH_SMOOTHING_FRAMES` | `5` | Median-filter window for the pitch overlay |
+| `DEFAULT_SOURCE` | `"mic"` | Default `--source` (`mic` or `loopback`) |
 
 ---
 
@@ -159,9 +220,10 @@ $$
 
 ```
 spectrum_analyzer/
-├── audio_capture.py   # Mic stream (sounddevice / PyAudio)
+├── audio_capture.py   # Mic/loopback stream (sounddevice / PyAudio)
 ├── dsp.py             # Window, rFFT, dB, frequency bins
-├── visualizer.py      # Static bars, live bars, waterfall
+├── pitch_detect.py    # Autocorrelation pitch tracker + note naming
+├── visualizer.py       # Static bars, live bars, waterfall, pitch overlay
 ├── config.py           # Tunables
 ├── main.py             # CLI entry point
 ├── test_tone.py        # Calibration sine playback
@@ -180,6 +242,7 @@ The app tries to fail gracefully:
 | Situation | What you see |
 |---|---|
 | No mic / no backend | Clear message with permissions, wiring, and install hints |
+| Loopback unavailable (no device given, or platform limitation) | `LoopbackUnavailableError` with platform-specific setup hints and device candidates |
 | Device unplugged mid-run | `AudioStreamReadError` with reconnect hint |
 | Buffer overflow / underrun | One-time warning; capture may continue |
 | Plot window closed | Animation stops, stream closed |
@@ -201,9 +264,7 @@ $$
 
 *Not implemented unless requested:*
 
-- Pitch detection
-- System loopback input
-- Export spectrogram/recording
+- Export spectrogram / recording to file
 - Web Audio browser UI
 
 ---
