@@ -1,0 +1,6 @@
+numpy>=1.21.0
+matplotlib>=3.5.0
+sounddevice>=0.4.6
+
+# Optional fallback if sounddevice cannot be used (uncomment if needed):
+# PyAudio>=0.2.13
