@@ -162,10 +162,11 @@ $$
 where $w[n]$ is the selected window function (Hann, Hamming, or rectangular) and $\varepsilon = 10^{-6}$ avoids $\log(0)$. Only the one-sided (non-negative frequency) half of the spectrum is kept, via `numpy.fft.rfft`.
 
 **Pitch detection** estimates the fundamental frequency from the frame's autocorrelation, computed efficiently in the frequency domain (Wiener–Khinchin theorem):
+
 ### Autocorrelation Formulation
 
 $$
-r[\tau] = \mathcal{F}^{-1}\left\{ \mathcal{F}\{x\} \cdot \overline{\mathcal{F}\{x\}} \right\}, \qquad r[\tau] \leftarrow \frac{r[\tau]}{r[0]}
+r[\tau] = \mathcal{F}^{-1}\left\lbrace \mathcal{F}\lbrace x\rbrace \cdot \overline{\mathcal{F}\lbrace x\rbrace} \right\rbrace, \qquad r[\tau] \leftarrow \frac{r[\tau]}{r[0]}
 $$
 
 
