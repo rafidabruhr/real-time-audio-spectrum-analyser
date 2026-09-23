@@ -1,22 +1,3 @@
-"""
-Lightweight pitch (fundamental frequency) detection for the live overlay.
-
-Uses time-domain autocorrelation (ACF) with parabolic interpolation — no
-extra dependencies beyond numpy, so it works with whatever is already
-installed for the FFT spectrum view.
-
-Algorithm
----------
-1. Remove DC offset from the frame.
-2. Autocorrelate the frame with itself (via FFT for speed).
-3. Restrict the search to the lag range implied by [fmin, fmax].
-4. Pick the strongest peak in that range.
-5. Parabolic interpolation around the peak for sub-sample lag precision.
-6. Confidence = normalized autocorrelation value at that peak (0..1).
-   Frames below the confidence/RMS thresholds report "no pitch" so the
-   overlay does not flicker during silence or noise.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -41,14 +22,6 @@ _A4_MIDI = 69
 
 
 def hz_to_note(frequency_hz: float) -> Tuple[str, float]:
-    """
-    Convert a frequency to the nearest note name and cents deviation.
-
-    Returns
-    -------
-    (note_name, cents_off) : tuple[str, float]
-        e.g. ("A4", -3.2). cents_off is in roughly [-50, 50].
-    """
     midi = _A4_MIDI + 12.0 * np.log2(frequency_hz / _A4_HZ)
     nearest_midi = int(round(midi))
     cents_off = (midi - nearest_midi) * 100.0
@@ -63,24 +36,6 @@ def autocorrelation_pitch(
     fmin: float = PITCH_FMIN,
     fmax: float = PITCH_FMAX,
 ) -> Tuple[Optional[float], float]:
-    """
-    Estimate the fundamental frequency of one frame via autocorrelation.
-
-    Parameters
-    ----------
-    samples : np.ndarray
-        Time-domain frame (the same frame used for the FFT view is fine).
-    sample_rate : int
-        Samples per second.
-    fmin, fmax : float
-        Search range in Hz (default: human voice / typical instrument range).
-
-    Returns
-    -------
-    (frequency_hz, confidence) : tuple[float | None, float]
-        ``frequency_hz`` is None if the signal is too quiet or no clear
-        periodicity was found in range.
-    """
     x = np.asarray(samples, dtype=np.float64)
     x = x - np.mean(x)
 
@@ -126,11 +81,6 @@ def autocorrelation_pitch(
 
 
 class PitchTracker:
-    """
-    Smooths per-frame pitch estimates for a stable overlay: a median filter
-    over the last few confident estimates, so one noisy frame doesn't make
-    the on-screen note jump or flicker.
-    """
 
     def __init__(self, history: int = 5) -> None:
         self._history = history

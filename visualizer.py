@@ -1,25 +1,14 @@
-"""
-Matplotlib visualizations for the spectrum analyzer.
-
-Phase 2: single static bar chart (one captured frame).
-Phase 3: live bar spectrum via FuncAnimation + blitting (``set_height``).
-Phase 4: scrolling waterfall spectrogram (rolling buffer + ``imshow`` / ``set_data``).
-Extension: pitch overlay (note name + Hz, via ``pitch_detect``) and capture
-from either the microphone or system loopback (via ``audio_capture``'s
-``source``/``device`` options).
-
-If matplotlib cannot sustain ~30 fps, consider pyqtgraph for the live views.
-"""
-
 from __future__ import annotations
 
 import signal
 import sys
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.animation import FuncAnimation
+from matplotlib.artist import Artist
+from matplotlib.figure import Figure
 from matplotlib.image import AxesImage
 from matplotlib.lines import Line2D
 from matplotlib.patches import Rectangle
@@ -47,30 +36,12 @@ from pitch_detect import PitchEstimate, PitchTracker
 
 
 class WaterfallBuffer:
-    """
-    Fixed-size rolling spectrogram store with shape (history_len, num_bins).
-
-    Each new FFT frame shifts previous rows toward index 0 and writes the
-    latest spectrum on the last row. The same numpy array is reused every
-    frame so ``imshow.set_data`` never triggers a reallocation.
-    """
-
     def __init__(
         self,
         history_len: int,
         num_bins: int,
         fill_value: float = DB_MIN,
     ) -> None:
-        """
-        Parameters
-        ----------
-        history_len : int
-            Number of time slices kept on screen (``WATERFALL_HISTORY``).
-        num_bins : int
-            FFT bins per row (length of rFFT magnitude vector).
-        fill_value : float
-            Initial dB level (display floor).
-        """
         self.history_len = history_len
         self.num_bins = num_bins
         self._data = np.full(
@@ -83,19 +54,6 @@ class WaterfallBuffer:
         return self._data
 
     def push_row(self, spectrum_db: np.ndarray) -> np.ndarray:
-        """
-        Insert one new spectrum row (newest at the bottom row).
-
-        Parameters
-        ----------
-        spectrum_db : np.ndarray
-            Clipped dB magnitudes, length ``num_bins``.
-
-        Returns
-        -------
-        np.ndarray
-            The internal buffer (same object each call) for ``set_data``.
-        """
         # In-place scroll: oldest slice falls off the top, no new array allocated.
         self._data[0:-1, :] = self._data[1:, :]
         self._data[-1, :] = spectrum_db.astype(np.float32, copy=False)
@@ -103,19 +61,6 @@ class WaterfallBuffer:
 
 
 def _ensure_chunk_length(samples: np.ndarray) -> np.ndarray:
-    """
-    Trim or zero-pad a capture buffer to exactly ``CHUNK_SIZE`` samples.
-
-    Parameters
-    ----------
-    samples : np.ndarray
-        Raw chunk from the microphone.
-
-    Returns
-    -------
-    np.ndarray
-        Length ``CHUNK_SIZE``.
-    """
     if samples.shape[0] == CHUNK_SIZE:
         return samples
     if samples.shape[0] > CHUNK_SIZE:
@@ -128,27 +73,6 @@ def _open_mic_stream(
     source: InputSource = "mic",
     device: Optional[int] = None,
 ) -> AudioStream:
-    """
-    Open the capture stream (mic or loopback) and discard one buffer of
-    startup latency.
-
-    Parameters
-    ----------
-    source : "mic" | "loopback"
-        Which signal to capture; see ``audio_capture.AudioStream``.
-    device : int, optional
-        Explicit device index. Required for loopback on Linux/macOS.
-
-    Returns
-    -------
-    AudioStream
-        An open stream (caller must ``close()``).
-
-    Raises
-    ------
-    SystemExit
-        On capture errors (message printed to stderr).
-    """
     try:
         stream = AudioStream(source=source, device=device)
     except AudioCaptureError as err:
@@ -166,14 +90,12 @@ def _open_mic_stream(
 
 
 def _format_frequency_hz(value: float, _pos: int) -> str:
-    """Axis tick formatter: show kHz above 999 Hz."""
     if value >= 1000.0:
         return f"{value / 1000.0:.1f} kHz"
     return f"{int(value)} Hz"
 
 
 def _pitch_label(estimate: PitchEstimate) -> str:
-    """Overlay text for a pitch estimate, e.g. 'A4  440.3 Hz  (+3 cents)'."""
     if estimate.frequency_hz is None or estimate.note_name is None:
         return ""
     sign = "+" if estimate.cents_off >= 0 else ""
@@ -187,16 +109,8 @@ def _read_chunk_or_stop(
     stream: AudioStream,
     closed: dict,
     shutdown: Callable[[], None],
-    fig: plt.Figure,
+    fig: Figure,
 ) -> Optional[np.ndarray]:
-    """
-    Read one capture buffer or signal shutdown on failure.
-
-    Returns
-    -------
-    np.ndarray or None
-        Samples when successful; ``None`` if the stream failed (plot closing).
-    """
     try:
         return _ensure_chunk_length(stream.read_chunk())
     except AudioStreamReadError as err:
@@ -219,21 +133,6 @@ def run_static_bar_spectrum(
     source: InputSource = "mic",
     device: Optional[int] = None,
 ) -> None:
-    """
-    Capture one buffer and show magnitude (dB) vs frequency (Hz).
-
-    Parameters
-    ----------
-    window_type : str
-        Window applied before FFT (see ``dsp.apply_window``).
-    show_pitch : bool
-        Overlay the detected fundamental frequency (note + Hz) as a title
-        annotation.
-    source : "mic" | "loopback"
-        Capture source.
-    device : int, optional
-        Explicit device index (see ``--list-devices``).
-    """
     # Frequency resolution of the DFT: delta_f = sample_rate / chunk_size.
     # At 44100 Hz and N=1024, delta_f = 44100/1024 ≈ 43.07 Hz per bin.
     # A 1000 Hz tone peak should lie on the bin nearest 1000 Hz, within ±delta_f.
@@ -286,25 +185,6 @@ def run_live_bar_spectrum(
     source: InputSource = "mic",
     device: Optional[int] = None,
 ) -> None:
-    """
-    Real-time bar spectrum: one new FFT frame per animation tick.
-
-    Uses blitting: bar patches are created once, then ``set_height`` updates
-    magnitudes without clearing the axes. Close the window or press Ctrl+C to
-    exit; the audio stream is stopped in both cases.
-
-    Parameters
-    ----------
-    window_type : str
-        Window applied before each FFT.
-    show_pitch : bool
-        Overlay a vertical line at the detected pitch plus a note/Hz label,
-        updated every frame (smoothed via ``PitchTracker``).
-    source : "mic" | "loopback"
-        Capture source.
-    device : int, optional
-        Explicit device index (see ``--list-devices``).
-    """
     bin_width_hz = SAMPLE_RATE / CHUNK_SIZE
     freq_hz = get_freq_bins(SAMPLE_RATE, CHUNK_SIZE)
     num_bins = freq_hz.shape[0]
@@ -360,7 +240,9 @@ def run_live_bar_spectrum(
 
     def _shutdown() -> None:
         if anim is not None:
-            anim.event_source.stop()
+            event_source = getattr(anim, "event_source", None)
+            if event_source is not None:
+                event_source.stop()
         stream.close()
 
     def _on_close(_event) -> None:
@@ -375,11 +257,11 @@ def run_live_bar_spectrum(
     fig.canvas.mpl_connect("close_event", _on_close)
     signal.signal(signal.SIGINT, _on_sigint)
 
-    def _artists() -> List:
+    def _artists() -> List[Artist]:
         extra = [a for a in (pitch_line, pitch_text) if a is not None]
-        return patches + extra
+        return cast(List[Artist], patches + extra)
 
-    def _update(_frame: int) -> List:
+    def _update(_frame: int) -> List[Artist]:
         if closed["flag"]:
             return _artists()
 
@@ -396,14 +278,18 @@ def run_live_bar_spectrum(
             rect.set_height(float(height))
 
         if show_pitch and pitch_tracker is not None:
+            line = pitch_line
+            text = pitch_text
+            assert line is not None
+            assert text is not None
             estimate = pitch_tracker.update(samples, SAMPLE_RATE)
             if estimate.frequency_hz is not None:
-                pitch_line.set_xdata([estimate.frequency_hz, estimate.frequency_hz])
-                pitch_line.set_visible(True)
-                pitch_text.set_text(_pitch_label(estimate))
+                line.set_xdata([estimate.frequency_hz, estimate.frequency_hz])
+                line.set_visible(True)
+                text.set_text(_pitch_label(estimate))
             else:
-                pitch_line.set_visible(False)
-                pitch_text.set_text("")
+                line.set_visible(False)
+                text.set_text("")
 
         return _artists()
 
@@ -428,30 +314,12 @@ def run_live_waterfall(
     source: InputSource = "mic",
     device: Optional[int] = None,
 ) -> None:
-    """
-    Scrolling waterfall: time runs downward, frequency left-to-right.
-
-    Brighter colors (``COLORMAP``) mean higher dB. History length is
-    ``WATERFALL_HISTORY`` frames; oldest data scrolls off the top.
-
-    Parameters
-    ----------
-    window_type : str
-        Window applied before each FFT.
-    show_pitch : bool
-        Overlay a vertical line at the detected pitch plus a note/Hz label,
-        updated every frame (smoothed via ``PitchTracker``).
-    source : "mic" | "loopback"
-        Capture source.
-    device : int, optional
-        Explicit device index (see ``--list-devices``).
-    """
     num_bins = CHUNK_SIZE // 2 + 1
     nyquist = SAMPLE_RATE / 2.0
     frame_duration_sec = CHUNK_SIZE / SAMPLE_RATE
     history_duration_sec = WATERFALL_HISTORY * frame_duration_sec
     waterfall = WaterfallBuffer(WATERFALL_HISTORY, num_bins, fill_value=DB_MIN)
-    image_holder: List[AxesImage] = []
+    image_holder: List[Artist] = []
     closed = {"flag": False}
 
     stream = _open_mic_stream(source=source, device=device)
@@ -498,7 +366,9 @@ def run_live_waterfall(
 
     def _shutdown(anim: Optional[FuncAnimation]) -> None:
         if anim is not None:
-            anim.event_source.stop()
+            event_source = getattr(anim, "event_source", None)
+            if event_source is not None:
+                event_source.stop()
         stream.close()
 
     anim_ref: List[Optional[FuncAnimation]] = [None]
@@ -518,7 +388,7 @@ def run_live_waterfall(
     fig.canvas.mpl_connect("close_event", _on_close)
     signal.signal(signal.SIGINT, _on_sigint)
 
-    def _update(_frame: int) -> List[AxesImage]:
+    def _update(_frame: int) -> List[Artist]:
         if closed["flag"]:
             return image_holder
 
@@ -534,14 +404,18 @@ def run_live_waterfall(
         im.set_data(matrix)
 
         if show_pitch and pitch_tracker is not None:
+            line = pitch_line
+            text = pitch_text
+            assert line is not None
+            assert text is not None
             estimate = pitch_tracker.update(samples, SAMPLE_RATE)
             if estimate.frequency_hz is not None:
-                pitch_line.set_xdata([estimate.frequency_hz, estimate.frequency_hz])
-                pitch_line.set_visible(True)
-                pitch_text.set_text(_pitch_label(estimate))
+                line.set_xdata([estimate.frequency_hz, estimate.frequency_hz])
+                line.set_visible(True)
+                text.set_text(_pitch_label(estimate))
             else:
-                pitch_line.set_visible(False)
-                pitch_text.set_text("")
+                line.set_visible(False)
+                text.set_text("")
 
         return image_holder
 

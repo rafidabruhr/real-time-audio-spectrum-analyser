@@ -1,37 +1,3 @@
-"""
-Microphone / system-loopback input stream handling for the spectrum analyzer.
-
-Two capture sources are supported:
-  * "mic"      — a normal input device (built-in mic, headset, USB mic).
-  * "loopback" — "what you hear": the system's own audio output, captured
-                 back in as an input signal. Lets the analyzer / pitch
-                 tracker run on music or video playing on the computer
-                 instead of (or in addition to) a microphone.
-
-Loopback support is platform-dependent — there is no OS-agnostic "give me
-system audio" API:
-
-  * Windows — sounddevice/PortAudio can open any WASAPI *output* device in
-    loopback mode via ``sd.WasapiSettings(loopback=True)``. No extra
-    software needed.
-  * Linux (PulseAudio/PipeWire) — the audio server exposes each output as a
-    paired input named "Monitor of <device>". Select that device by index,
-    same as a microphone; no special flag required.
-  * macOS — CoreAudio has no built-in loopback. A virtual audio device such
-    as BlackHole or Soundflower must be installed and selected as the input
-    (route output to a Multi-Output Device so you can still hear it live).
-
-``AudioStream(source="loopback")`` auto-detects the Windows case. On Linux
-and macOS it raises a ``LoopbackUnavailableError`` listing candidate
-"Monitor of ..." / virtual devices and asks the caller to pick one via
-``device=<index>`` (``--device`` / ``--list-devices`` in main.py), since
-PortAudio can't reliably guess which device *is* system audio on those
-platforms.
-
-Falls back to ``pyaudio`` (mic only — pyaudio has no loopback support) if
-``sounddevice`` is not installed.
-"""
-
 from __future__ import annotations
 
 import platform
@@ -53,13 +19,13 @@ _sd = None
 _pyaudio = None
 
 try:
-    import sounddevice as _sd  # type: ignore
+    import sounddevice as _sd  # type: ignore[import-not-found]
 except ImportError:
     _sd = None
 
 if _sd is None:
     try:
-        import pyaudio as _pyaudio  # type: ignore
+        import pyaudio as _pyaudio  # type: ignore[import-not-found]
     except ImportError:
         _pyaudio = None
 
@@ -97,14 +63,6 @@ def list_devices() -> List[Dict[str, Any]]:
 
 
 def list_loopback_devices() -> List[Dict[str, Any]]:
-    """
-    Return devices usable as a loopback ("what you hear") source.
-
-    On Windows: every WASAPI output device (opened in loopback mode).
-    On Linux/macOS: input devices whose name suggests they carry system
-    audio (PulseAudio/PipeWire "Monitor of ...", or virtual devices like
-    BlackHole / Soundflower / Stereo Mix).
-    """
     all_devices = list_devices()
     system = platform.system()
 
@@ -119,7 +77,6 @@ def list_loopback_devices() -> List[Dict[str, Any]]:
 
 
 def _default_input_index_pyaudio(pa: Any) -> Optional[int]:
-    """Return default input device index, or None if unavailable."""
     try:
         info = pa.get_default_input_device_info()
         return int(info["index"])
@@ -128,14 +85,11 @@ def _default_input_index_pyaudio(pa: Any) -> Optional[int]:
 
 
 def _list_input_devices_sounddevice() -> bool:
-    """Return True if at least one input-capable device exists."""
     assert _sd is not None
     try:
         devices = _sd.query_devices()
     except Exception as exc:
         raise AudioCaptureError(
-            "Could not query audio devices. Check that your audio subsystem "
-            "is running and that the application has microphone permission "
             f"(OS settings / privacy). Details: {exc}"
         ) from exc
 
@@ -146,30 +100,6 @@ def _list_input_devices_sounddevice() -> bool:
 
 
 class AudioStream:
-    """
-    Blocking read interface to one audio input stream (mic or loopback).
-
-    Parameters
-    ----------
-    sample_rate : int
-        Samples per second (Hz).
-    chunk_size : int
-        Number of samples returned by each ``read_chunk`` call.
-    channels : int
-        Requested output channel count (1 = mono). For loopback the actual
-        device stream may be opened in stereo and downmixed to mono in
-        ``read_chunk`` when ``channels == 1``.
-    dtype : str
-        ``"float32"`` (normalized roughly -1..1) or ``"int16"``.
-    source : "mic" | "loopback"
-        Which signal to capture.
-    device : int, optional
-        Explicit device index (from ``list_devices`` / ``list_loopback_devices``).
-        Required for loopback on Linux/macOS; optional on Windows (defaults
-        to the system default output device) and for mic (defaults to the
-        system default input device).
-    """
-
     def __init__(
         self,
         sample_rate: int = SAMPLE_RATE,
@@ -187,9 +117,9 @@ class AudioStream:
         self.device = device
         self._backend: Optional[BackendName] = None
 
-        self._sd_stream: Optional[object] = None
-        self._pa: Optional[object] = None
-        self._pa_stream: Optional[object] = None
+        self._sd_stream: Optional[Any] = None
+        self._pa: Optional[Any] = None
+        self._pa_stream: Optional[Any] = None
         self._overflow_warned: bool = False
 
         self._open_stream()
@@ -299,7 +229,7 @@ class AudioStream:
             out_channels = max(1, int(dev_info.get("max_output_channels", 2)))
             open_channels = min(self.channels if self.channels > 1 else out_channels, out_channels)
             try:
-                wasapi_settings = _sd.WasapiSettings(loopback=True)
+                wasapi_settings = _sd.WasapiSettings(**{"loopback": True})
                 self._sd_stream = _sd.InputStream(
                     samplerate=self.sample_rate,
                     channels=open_channels,
@@ -370,21 +300,6 @@ class AudioStream:
         )
 
     def read_chunk(self) -> np.ndarray:
-        """
-        Read one buffer of audio.
-
-        Returns
-        -------
-        np.ndarray
-            Shape ``(chunk_size,)`` for mono. If the underlying stream is
-            stereo (common for loopback) and ``self.channels == 1``,
-            channels are averaged down to mono.
-
-        Raises
-        ------
-        AudioStreamReadError
-            Device disconnected, stream invalid, or unrecoverable I/O error.
-        """
         if self._backend == "sounddevice":
             assert self._sd_stream is not None and _sd is not None
             try:

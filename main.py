@@ -1,14 +1,3 @@
-"""
-Entry point for the spectrum analyzer project.
-
-Phase 1: ``--capture-test`` — print amplitude stats for 5 seconds.
-Phase 2: ``--static-bars`` — one-shot frequency bar chart.
-Live analyzer: ``python main.py [--mode bars|waterfall] [--window TYPE]``.
-Extension: ``--pitch`` overlays detected fundamental frequency (note + Hz);
-``--source loopback`` captures system audio instead of the mic; ``--device``
-picks a specific device (see ``--list-devices``).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -21,6 +10,7 @@ from audio_capture import (
     AudioCaptureError,
     AudioStream,
     AudioStreamReadError,
+    InputSource,
     list_devices,
     list_loopback_devices,
 )
@@ -40,21 +30,9 @@ def _chunk_stats(chunk: np.ndarray) -> tuple[float, float, float]:
 
 def run_capture_test(
     duration_sec: float = 5.0,
-    source: str = "mic",
+    source: InputSource = "mic",
     device: "int | None" = None,
 ) -> None:
-    """
-    Open the capture stream, read chunks for ``duration_sec`` seconds, print stats.
-
-    Parameters
-    ----------
-    duration_sec : float
-        How long to capture before exiting.
-    source : "mic" | "loopback"
-        Capture source.
-    device : int, optional
-        Explicit device index.
-    """
     print(f"Sample rate: {SAMPLE_RATE} Hz, chunk size: {CHUNK_SIZE} samples", flush=True)
     print(
         f"Capturing ({source}) for {duration_sec:.1f} s — "
@@ -91,7 +69,6 @@ def run_capture_test(
 
 
 def _print_device_list() -> None:
-    """Print all audio devices plus which ones look loopback-capable."""
     try:
         devices = list_devices()
     except AudioCaptureError as err:
@@ -121,12 +98,6 @@ def _print_device_list() -> None:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    # Window choice (spectral leakage):
-    # • rectangular — narrowest main lobe if tone sits on a bin, but strong
-    #   side lobes; bright "skirts" on the waterfall when pitch is between bins.
-    # • hann / hamming — wider main lobe (peak smears across more bins) but
-    #   much lower side lobes; cleaner visuals and less audible leakage between
-    #   partials when analyzing voice or music.
     parser = argparse.ArgumentParser(
         description="Real-time microphone/loopback spectrum analyzer (FFT + waterfall + pitch).",
         epilog=(

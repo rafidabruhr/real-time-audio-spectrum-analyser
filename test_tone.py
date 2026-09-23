@@ -1,10 +1,3 @@
-"""
-Play a pure sine tone for calibrating the spectrum analyzer.
-
-Use headphones or moderate volume: a 1 kHz tone should produce a peak on the
-bar chart within one FFT bin of 1000 Hz when captured by the mic or loopback.
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -27,25 +20,6 @@ def generate_sine_wave(
     sample_rate: int = SAMPLE_RATE,
     amplitude: float = 0.4,
 ) -> np.ndarray:
-    """
-    Build a mono sine wave in float32.
-
-    Parameters
-    ----------
-    frequency_hz : float
-        Tone frequency in hertz.
-    duration_sec : float
-        Length of the signal in seconds.
-    sample_rate : int
-        Samples per second.
-    amplitude : float
-        Peak amplitude in roughly [-1, 1] before clipping.
-
-    Returns
-    -------
-    np.ndarray
-        float32 samples, shape ``(num_samples,)``.
-    """
     n = int(round(duration_sec * sample_rate))
     t = np.arange(n, dtype=np.float64) / sample_rate
     # Pure tone: single frequency component in the time domain.
@@ -59,20 +33,6 @@ def play_sine_tone(
     sample_rate: int = SAMPLE_RATE,
     amplitude: float = 0.4,
 ) -> None:
-    """
-    Generate and play a sine tone through the default output device.
-
-    Parameters
-    ----------
-    frequency_hz : float
-        Tone frequency (default 1000 Hz).
-    duration_sec : float
-        Playback length; use a long value while you run the analyzer.
-    sample_rate : int
-        Must match analyzer ``SAMPLE_RATE`` for meaningful bin alignment.
-    amplitude : float
-        Output level; keep moderate to protect ears and avoid clipping.
-    """
     if _sd is None:
         print(
             "sounddevice is required for playback. Install: pip install sounddevice",

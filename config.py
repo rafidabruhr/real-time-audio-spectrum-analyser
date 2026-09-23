@@ -1,10 +1,3 @@
-"""
-Central configuration for the real-time spectrum analyzer.
-
-All tunable constants live here so DSP, capture, and visualization stay
-in sync without magic numbers scattered through the codebase.
-"""
-
 SAMPLE_RATE: int = 44100
 CHUNK_SIZE: int = 1024  # samples per buffer (one FFT frame later)
 CHANNELS: int = 1
