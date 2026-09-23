@@ -162,10 +162,12 @@ $$
 where $w[n]$ is the selected window function (Hann, Hamming, or rectangular) and $\varepsilon = 10^{-6}$ avoids $\log(0)$. Only the one-sided (non-negative frequency) half of the spectrum is kept, via `numpy.fft.rfft`.
 
 **Pitch detection** estimates the fundamental frequency from the frame's autocorrelation, computed efficiently in the frequency domain (Wiener–Khinchin theorem):
+### Autocorrelation Formulation
 
 $$
 r[\tau] = \mathcal{F}^{-1}\left\{ \mathcal{F}\{x\} \cdot \overline{\mathcal{F}\{x\}} \right\}, \qquad r[\tau] \leftarrow \frac{r[\tau]}{r[0]}
 $$
+
 
 The tracker searches for the highest peak of $r[\tau]$ within the lag range corresponding to `PITCH_FMIN`–`PITCH_FMAX`, refines it with parabolic interpolation for sub-bin accuracy, and accepts it only if the peak confidence exceeds `PITCH_CONFIDENCE_MIN` and the frame's RMS exceeds `PITCH_RMS_MIN`. The frequency is converted to a MIDI note number and cents offset via:
 
