@@ -59,7 +59,7 @@ If `sounddevice` is unavailable on your system, install PyAudio manually:
 pip install PyAudio
 ```
 
-The app auto-detects whichever backend is present.
+The app auto-detects the available backend.
 
 ---
 
@@ -118,8 +118,9 @@ python main.py --static-bars
 ```
 
 The tallest bar should land on the bin nearest **1000 Hz**, i.e. within one bin width, where the frequency resolution is:
-
-$$\Delta f = \frac{\text{SAMPLE\_RATE}}{\text{CHUNK\_SIZE}}$$
+```math
+\Delta f = \frac{\text{SAMPLE\_RATE}}{\text{CHUNK\_SIZE}}
+```
 
 ---
 
