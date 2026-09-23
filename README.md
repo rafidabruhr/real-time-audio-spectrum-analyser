@@ -81,7 +81,9 @@ python main.py --static-bars
 
 The tallest bar should land on the bin nearest **1000 Hz**. Frequency resolution:
 
-$\Delta f = \frac{\text{SAMPLE\_RATE}}{\text{CHUNK\_SIZE}} = \frac{44100}{1024} \approx 43.07\ \text{Hz}$
+```math
+\Delta f = \frac{\text{SAMPLE\_RATE}}{\text{CHUNK\_SIZE}}
+```
 
 Peak must be within **one bin width** of 1000 Hz.
 
