@@ -1,4 +1,4 @@
-/># Real-Time Audio Spectrum Analyzer
+*Real-Time Audio Spectrum Analyser*
 
 Educational DSP project: capture live microphone audio, compute a one-sided FFT spectrum, and display it as a **real-time bar chart** or **scrolling waterfall spectrogram**.
 
