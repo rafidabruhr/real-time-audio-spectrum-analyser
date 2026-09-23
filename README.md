@@ -1,6 +1,8 @@
-*Real-Time Audio Spectrum Analyser*
+$$
+\Huge \textit{Real-Time Audio Spectrum Analyser}
+$$
 
-Educational DSP project: capture live microphone audio, compute a one-sided FFT spectrum, and display it as a **real-time bar chart** or **scrolling waterfall spectrogram**.
+Capture live microphone audio, compute a one-sided FFT spectrum, and display it as a **real-time bar chart** or **scrolling waterfall spectrogram**.
 
 Stack: Python 3.9+, `sounddevice` (PyAudio fallback), `numpy`, `matplotlib`.
 
@@ -31,7 +33,7 @@ If `sounddevice` is unavailable, install PyAudio manually (`pip install PyAudio`
 
 ---
 
-## Quick start (live analyzer)
+## Quick start (live analyser)
 
 **Bar spectrum (default):**
 
@@ -40,7 +42,7 @@ python main.py
 python main.py --mode bars
 ```
 
-**Scrolling waterfall** (200-frame history, `inferno` colormap — brighter = louder):
+**Scrolling waterfall** (200-frame history, `inferno` colourmap — brighter = louder):
 
 ```bash
 python main.py --mode waterfall
@@ -54,7 +56,7 @@ python main.py --window hamming
 python main.py --window rectangular
 ```
 
-| Window        | Visual / audible effect |
+| Window        | Visual/audible effect |
 |---------------|-------------------------|
 | `hann`        | Default; good leakage vs resolution tradeoff |
 | `hamming`     | Similar to Hann; slightly different sidelobe floor |
