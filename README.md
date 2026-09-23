@@ -7,8 +7,9 @@ Capture live microphone audio, compute a one-sided FFT spectrum, and display it 
 Stack: Python 3.9+, `sounddevice` (PyAudio fallback), `numpy`, `matplotlib`.
 
 ---
-
-## Prerequisites
+$$
+\textbf{Prerequisites}
+$$
 
 - Python **3.9+**
 - Working microphone (built-in, headset, or USB)
@@ -20,7 +21,9 @@ Optional system package for PortAudio (if `sounddevice` fails to install):
 
 ---
 
-## Install
+$$
+\textbf{Installation}
+$$
 
 ```bash
 cd spectrum_analyzer
@@ -33,7 +36,9 @@ If `sounddevice` is unavailable, install PyAudio manually (`pip install PyAudio`
 
 ---
 
-## Quick start (live analyser)
+$$
+\textit{Quick Start}
+$$
 
 **Bar spectrum (default):**
 
@@ -65,8 +70,9 @@ python main.py --window rectangular
 Close the plot window or press **Ctrl+C** in the terminal to exit. The mic stream is always closed on exit.
 
 ---
-
-## Calibration (1 kHz test tone)
+$$
+\textbf{Calibration (1 kHz test tone)}
+$$
 
 **Terminal 1** — play a sine tone (default 1000 Hz):
 
@@ -100,8 +106,10 @@ Peak must be within **one bin width** of 1000 Hz.
 | `python main.py --live-bars` | Same as `--mode bars` |
 
 ---
+$$
+\textit{Configuration}
+$$
 
-## Configuration
 
 Edit `config.py`:
 
@@ -116,7 +124,9 @@ Edit `config.py`:
 
 ---
 
-## Project layout
+$$
+\textit{Project Layout}
+$$
 
 ```
 spectrum_analyzer/
@@ -131,8 +141,9 @@ spectrum_analyzer/
 ```
 
 ---
-
-## Error messages (no raw tracebacks)
+$$
+\textit{Error Messages}
+$$
 
 The app tries to fail gracefully:
 
