@@ -1,4 +1,4 @@
-# Real-Time Audio Spectrum Analyzer
+<img width="1090" height="521" alt="image" src="https://github.com/user-attachments/assets/d94efb1c-be23-4ad7-a1d9-faff677a212e" /># Real-Time Audio Spectrum Analyzer
 
 Educational DSP project: capture live microphone audio, compute a one-sided FFT spectrum, and display it as a **real-time bar chart** or **scrolling waterfall spectrogram**.
 
@@ -81,9 +81,9 @@ python main.py --static-bars
 
 The tallest bar should land on the bin nearest **1000 Hz**. Frequency resolution:
 
-\[
+$$
 \Delta f = \frac{\text{SAMPLE\_RATE}}{\text{CHUNK\_SIZE}} = \frac{44100}{1024} \approx 43.07\ \text{Hz}
-\]
+$$
 
 Peak must be within **one bin width** of 1000 Hz.
 
