@@ -267,7 +267,7 @@ $$
 
 *Not implemented unless requested:*
 
-- Export spectrogram / recording to file
+- Export spectrogram/recording to file
 - Web Audio browser UI
 
 ---
