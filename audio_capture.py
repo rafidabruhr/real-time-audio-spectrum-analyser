@@ -1,145 +1,108 @@
-from __future__ import annotations
-
 import platform
 import sys
-from typing import Any, Dict, List, Literal, Optional
-
 import numpy as np
 
 from config import CHANNELS, CHUNK_SIZE, SAMPLE_RATE
-
-BackendName = Literal["sounddevice", "pyaudio"]
-InputSource = Literal["mic", "loopback"]
-
-# ---------------------------------------------------------------------------
-# Backend detection
-# ---------------------------------------------------------------------------
 
 _sd = None
 _pyaudio = None
 
 try:
-    import sounddevice as _sd  # type: ignore[import-not-found]
+    import sounddevice as _sd
 except ImportError:
-    _sd = None
+    pass
 
 if _sd is None:
     try:
-        import pyaudio as _pyaudio  # type: ignore[import-not-found]
+        import pyaudio as _pyaudio
     except ImportError:
-        _pyaudio = None
+        pass
 
 
 class AudioCaptureError(Exception):
-    """User-facing error for microphone / stream problems."""
+    pass
 
 
 class AudioStreamReadError(AudioCaptureError):
-    """Failure while reading audio (disconnect, overflow, driver error)."""
+    pass
 
 
 class LoopbackUnavailableError(AudioCaptureError):
-    """Loopback was requested but the platform/backend can't provide it."""
+    pass
 
 
-def list_devices() -> List[Dict[str, Any]]:
-    """Return every audio device sounddevice can see (for ``--list-devices``)."""
+def list_devices():
     if _sd is None:
         raise AudioCaptureError("sounddevice is not installed; cannot list devices.")
-    devices = _sd.query_devices()
-    out: List[Dict[str, Any]] = []
-    for i, dev in enumerate(devices):
-        out.append(
-            {
-                "index": i,
-                "name": dev.get("name", "?"),
-                "hostapi": _sd.query_hostapis(dev.get("hostapi", 0))["name"],
-                "max_input_channels": dev.get("max_input_channels", 0),
-                "max_output_channels": dev.get("max_output_channels", 0),
-                "default_samplerate": dev.get("default_samplerate", SAMPLE_RATE),
-            }
-        )
+    out = []
+    for i, dev in enumerate(_sd.query_devices()):
+        out.append({
+            "index": i,
+            "name": dev.get("name", "?"),
+            "hostapi": _sd.query_hostapis(dev.get("hostapi", 0))["name"],
+            "max_input_channels": dev.get("max_input_channels", 0),
+            "max_output_channels": dev.get("max_output_channels", 0),
+            "default_samplerate": dev.get("default_samplerate", SAMPLE_RATE),
+        })
     return out
 
 
-def list_loopback_devices() -> List[Dict[str, Any]]:
-    all_devices = list_devices()
+def list_loopback_devices():
+    devices = list_devices()
     system = platform.system()
 
     if system == "Windows":
-        return [
-            d for d in all_devices
-            if d["hostapi"] == "Windows WASAPI" and d["max_output_channels"] > 0
-        ]
+        return [d for d in devices if d["hostapi"] == "Windows WASAPI" and d["max_output_channels"] > 0]
 
     keywords = ("monitor of", "blackhole", "soundflower", "loopback", "stereo mix")
-    return [d for d in all_devices if any(k in d["name"].lower() for k in keywords)]
+    return [d for d in devices if any(k in d["name"].lower() for k in keywords)]
 
 
-def _default_input_index_pyaudio(pa: Any) -> Optional[int]:
+def _default_input_index_pyaudio(pa):
     try:
-        info = pa.get_default_input_device_info()
-        return int(info["index"])
+        return int(pa.get_default_input_device_info()["index"])
     except OSError:
         return None
 
 
-def _list_input_devices_sounddevice() -> bool:
-    assert _sd is not None
+def _has_input_device():
     try:
         devices = _sd.query_devices()
     except Exception as exc:
-        raise AudioCaptureError(
-            f"(OS settings / privacy). Details: {exc}"
-        ) from exc
-
-    for dev in devices:
-        if dev.get("max_input_channels", 0) > 0:
-            return True
-    return False
+        raise AudioCaptureError(f"(OS settings / privacy). Details: {exc}") from exc
+    return any(d.get("max_input_channels", 0) > 0 for d in devices)
 
 
 class AudioStream:
-    def __init__(
-        self,
-        sample_rate: int = SAMPLE_RATE,
-        chunk_size: int = CHUNK_SIZE,
-        channels: int = CHANNELS,
-        dtype: str = "float32",
-        source: InputSource = "mic",
-        device: Optional[int] = None,
-    ) -> None:
+    def __init__(self, sample_rate=SAMPLE_RATE, chunk_size=CHUNK_SIZE, channels=CHANNELS,
+                 dtype="float32", source="mic", device=None):
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         self.channels = channels
         self.dtype = dtype
         self.source = source
         self.device = device
-        self._backend: Optional[BackendName] = None
+        self._backend = None
 
-        self._sd_stream: Optional[Any] = None
-        self._pa: Optional[Any] = None
-        self._pa_stream: Optional[Any] = None
-        self._overflow_warned: bool = False
+        self._sd_stream = None
+        self._pa = None
+        self._pa_stream = None
+        self._overflow_warned = False
 
-        self._open_stream()
-
-    @property
-    def backend(self) -> BackendName:
-        """Which library is driving capture (``sounddevice`` or ``pyaudio``)."""
-        if self._backend is None:
-            raise RuntimeError("Stream is not open.")
-        return self._backend
-
-    def _open_stream(self) -> None:
-        if self.source == "loopback":
+        if source == "loopback":
             self._open_loopback()
         else:
             self._open_mic()
 
-    def _open_mic(self) -> None:
+    @property
+    def backend(self):
+        if self._backend is None:
+            raise RuntimeError("Stream is not open.")
+        return self._backend
+
+    def _open_mic(self):
         if _sd is not None:
-            if self.device is None and not _list_input_devices_sounddevice():
+            if self.device is None and not _has_input_device():
                 raise AudioCaptureError(
                     "No audio input device found.\n"
                     "• Plug in a microphone or headset.\n"
@@ -149,11 +112,8 @@ class AudioStream:
                 )
             try:
                 self._sd_stream = _sd.InputStream(
-                    samplerate=self.sample_rate,
-                    channels=self.channels,
-                    dtype=self.dtype,
-                    blocksize=self.chunk_size,
-                    device=self.device,
+                    samplerate=self.sample_rate, channels=self.channels,
+                    dtype=self.dtype, blocksize=self.chunk_size, device=self.device,
                 )
                 self._sd_stream.start()
                 self._backend = "sounddevice"
@@ -162,9 +122,8 @@ class AudioStream:
                 msg = str(exc).lower()
                 if "device" in msg or "invalid" in msg or "no" in msg:
                     raise AudioCaptureError(
-                        "Could not open the microphone.\n"
-                        "Check permissions and that a default input device is "
-                        f"selected. Details: {exc}"
+                        f"Could not open the microphone.\nCheck permissions and that a "
+                        f"default input device is selected. Details: {exc}"
                     ) from exc
                 raise AudioCaptureError(f"Failed to start audio capture: {exc}") from exc
 
@@ -173,25 +132,15 @@ class AudioStream:
             device_index = self.device if self.device is not None else _default_input_index_pyaudio(pa)
             if device_index is None:
                 pa.terminate()
-                raise AudioCaptureError(
-                    "No audio input device found (PyAudio).\n"
-                    "Check microphone connection and OS permissions."
-                )
+                raise AudioCaptureError("No audio input device found (PyAudio).\nCheck microphone connection and OS permissions.")
             fmt = _pyaudio.paInt16 if self.dtype == "int16" else _pyaudio.paFloat32
             try:
-                stream = pa.open(
-                    format=fmt,
-                    channels=self.channels,
-                    rate=self.sample_rate,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=self.chunk_size,
-                )
+                stream = pa.open(format=fmt, channels=self.channels, rate=self.sample_rate,
+                                  input=True, input_device_index=device_index,
+                                  frames_per_buffer=self.chunk_size)
             except OSError as exc:
                 pa.terminate()
-                raise AudioCaptureError(
-                    f"Could not open the microphone (PyAudio).\nDetails: {exc}"
-                ) from exc
+                raise AudioCaptureError(f"Could not open the microphone (PyAudio).\nDetails: {exc}") from exc
             self._pa = pa
             self._pa_stream = stream
             self._backend = "pyaudio"
@@ -203,21 +152,22 @@ class AudioStream:
             "If sounddevice fails on your system, try: pip install PyAudio"
         )
 
-    def _open_loopback(self) -> None:
+    def _open_loopback(self):
         if _sd is None:
             raise LoopbackUnavailableError(
-                "Loopback capture requires sounddevice (PyAudio has no "
-                "loopback support). Install it: pip install sounddevice"
+                "Loopback capture requires sounddevice (PyAudio has no loopback support). "
+                "Install it: pip install sounddevice"
             )
 
         system = platform.system()
 
+        # Windows: WASAPI loopback on the default (or given) output device
         if system == "Windows":
             devices = _sd.query_devices()
             device_index = self.device
             if device_index is None:
                 try:
-                    device_index = _sd.default.device[1]  # default output device
+                    device_index = _sd.default.device[1]
                 except Exception:
                     device_index = None
             if device_index is None:
@@ -229,98 +179,74 @@ class AudioStream:
             out_channels = max(1, int(dev_info.get("max_output_channels", 2)))
             open_channels = min(self.channels if self.channels > 1 else out_channels, out_channels)
             try:
-                wasapi_settings = _sd.WasapiSettings(**{"loopback": True})
                 self._sd_stream = _sd.InputStream(
-                    samplerate=self.sample_rate,
-                    channels=open_channels,
-                    dtype=self.dtype,
-                    blocksize=self.chunk_size,
-                    device=device_index,
-                    extra_settings=wasapi_settings,
+                    samplerate=self.sample_rate, channels=open_channels, dtype=self.dtype,
+                    blocksize=self.chunk_size, device=device_index,
+                    extra_settings=_sd.WasapiSettings(loopback=True),
                 )
                 self._sd_stream.start()
                 self._backend = "sounddevice"
                 return
             except Exception as exc:
                 raise LoopbackUnavailableError(
-                    "Could not open system audio in loopback mode (WASAPI).\n"
+                    f"Could not open system audio in loopback mode (WASAPI).\n"
                     f"Device: {dev_info.get('name', device_index)}. Details: {exc}"
                 ) from exc
 
-        # Linux (PulseAudio/PipeWire "Monitor of ...") or macOS (BlackHole /
-        # Soundflower): these appear as ordinary input devices, so they're
-        # opened like a mic — but require the caller to name one explicitly,
-        # since PortAudio has no "this is loopback" flag on these platforms.
+        # Linux/macOS have no "this is loopback" flag — the monitor/virtual
+        # device just looks like a regular mic, so we need it named explicitly
         if self.device is None:
             candidates = list_loopback_devices()
-            hint = (
-                "\n".join(f"  [{d['index']}] {d['name']}" for d in candidates)
-                if candidates
-                else "  (none found)"
-            )
+            hint = "\n".join(f"  [{d['index']}] {d['name']}" for d in candidates) or "  (none found)"
             platform_hint = (
-                "On Linux: select the PulseAudio/PipeWire 'Monitor of <output>' "
-                "device.\nOn macOS: install a virtual device such as BlackHole "
+                "On Linux: select the PulseAudio/PipeWire 'Monitor of <output>' device.\n"
+                "On macOS: install a virtual device such as BlackHole "
                 "(e.g. brew install blackhole-2ch) and route output to it "
                 "(use a Multi-Output Device to still hear audio live)."
             )
             raise LoopbackUnavailableError(
-                "Loopback on this platform needs an explicit device.\n"
-                f"{platform_hint}\n"
-                f"Candidates found via --list-devices:\n{hint}\n"
-                "Pass one with --device <index>."
+                f"Loopback on this platform needs an explicit device.\n{platform_hint}\n"
+                f"Candidates found via --list-devices:\n{hint}\nPass one with --device <index>."
             )
 
         try:
             self._sd_stream = _sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=self.channels,
-                dtype=self.dtype,
-                blocksize=self.chunk_size,
-                device=self.device,
+                samplerate=self.sample_rate, channels=self.channels, dtype=self.dtype,
+                blocksize=self.chunk_size, device=self.device,
             )
             self._sd_stream.start()
             self._backend = "sounddevice"
-            return
         except Exception as exc:
-            raise LoopbackUnavailableError(
-                f"Could not open device {self.device} for loopback capture.\nDetails: {exc}"
-            ) from exc
+            raise LoopbackUnavailableError(f"Could not open device {self.device} for loopback capture.\nDetails: {exc}") from exc
 
-    def _warn_overflow_once(self) -> None:
+    def _warn_overflow_once(self):
         if self._overflow_warned:
             return
         self._overflow_warned = True
         print(
-            "Audio buffer overflow/underrun: capture could not keep up with "
-            "real time.\n"
+            "Audio buffer overflow/underrun: capture could not keep up with real time.\n"
             "• Close other apps using the mic/output or heavy CPU loads.\n"
             "• On Linux, JACK/PulseAudio glitch: try replugging the device.",
             file=sys.stderr,
         )
 
-    def read_chunk(self) -> np.ndarray:
+    def read_chunk(self):
         if self._backend == "sounddevice":
-            assert self._sd_stream is not None and _sd is not None
             try:
                 data, overflowed = self._sd_stream.read(self.chunk_size)
             except Exception as exc:
                 raise AudioStreamReadError(
-                    "Audio input stopped — device may have been unplugged, "
-                    "disabled, or (for loopback) its output stopped.\n"
-                    f"Details: {exc}"
+                    f"Audio input stopped — device may have been unplugged, disabled, "
+                    f"or (for loopback) its output stopped.\nDetails: {exc}"
                 ) from exc
             if overflowed:
                 self._warn_overflow_once()
             arr = np.asarray(data, dtype=np.float32 if self.dtype == "float32" else np.int16)
             if arr.ndim == 2 and arr.shape[1] > 1 and self.channels == 1:
                 arr = arr.mean(axis=1).astype(arr.dtype)
-            if self.channels == 1:
-                return arr.reshape(-1)
-            return arr
+            return arr.reshape(-1) if self.channels == 1 else arr
 
         if self._backend == "pyaudio":
-            assert self._pa_stream is not None and _pyaudio is not None
             try:
                 raw = self._pa_stream.read(self.chunk_size, exception_on_overflow=True)
             except OSError as exc:
@@ -330,24 +256,18 @@ class AudioStream:
                     raw = self._pa_stream.read(self.chunk_size, exception_on_overflow=False)
                 else:
                     raise AudioStreamReadError(
-                        "Microphone input stopped — device may have been "
-                        "unplugged or disabled (PyAudio).\n"
-                        f"Details: {exc}"
+                        f"Microphone input stopped — device may have been unplugged or "
+                        f"disabled (PyAudio).\nDetails: {exc}"
                     ) from exc
             except Exception as exc:
                 raise AudioStreamReadError(f"Microphone read failed (PyAudio).\nDetails: {exc}") from exc
-            if self.dtype == "int16":
-                arr = np.frombuffer(raw, dtype=np.int16)
-            else:
-                arr = np.frombuffer(raw, dtype=np.float32)
-            if self.channels == 1:
-                return arr.copy()
-            return arr.reshape(-1, self.channels)
+
+            arr = np.frombuffer(raw, dtype=np.int16 if self.dtype == "int16" else np.float32)
+            return arr.copy() if self.channels == 1 else arr.reshape(-1, self.channels)
 
         raise AudioStreamReadError("Audio stream is not open. Restart the application.")
 
-    def close(self) -> None:
-        """Stop and release the input device."""
+    def close(self):
         if self._backend == "sounddevice" and self._sd_stream is not None:
             try:
                 self._sd_stream.stop()
@@ -373,8 +293,8 @@ class AudioStream:
 
         self._backend = None
 
-    def __enter__(self) -> "AudioStream":
+    def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, *exc_info):
         self.close()
